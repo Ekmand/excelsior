@@ -954,9 +954,38 @@ function applyCellEdit(row, col, value, refresh = true) {
   return true;
 }
 
+function trimSpaces() {
+  if (!state.rows.length) return;
+  commitEditor();
+  let count = 0;
+  for (let row = 0; row < state.rows.length; row++) {
+    const len = state.rowLens[row] || 0;
+    for (let col = 0; col < len; col++) {
+      const value = state.rows[row][col] ?? "";
+      const next = value.trim();
+      if (next === value) continue;
+      state.rows[row][col] = next;
+      state.flags[row * state.colCount + col] = ExcelsiorCSV.classify(next);
+      count++;
+    }
+  }
+  if (!count) {
+    toast("No leading or trailing spaces.");
+    return;
+  }
+  editOrigin = null;
+  state.dirty = true;
+  state.encoding = "UTF-8";
+  state.text = ExcelsiorCSV.serializeCSV(rowsForSave(), state.delimiter);
+  state.byteLength = new TextEncoder().encode(state.text).length;
+  refreshAfterEdit(0);
+  toast(count === 1 ? "Trimmed 1 field." : `Trimmed ${count.toLocaleString("en-US")} fields.`);
+}
+
 function refreshAfterEdit(row) {
   analyze();
   rebuildIndices();
+  renderChips();
   if (row === 0 && state.hasHeader) renderHeader();
   if (state.selected) cellLabel.textContent = colName(state.selected.col);
   renderWindow();
@@ -1447,6 +1476,7 @@ document.getElementById("close-btn").addEventListener("click", closeFile);
 document.getElementById("download-edited").addEventListener("click", saveEdited);
 document.getElementById("download-original").addEventListener("click", saveOriginal);
 document.getElementById("download-view").addEventListener("click", saveView);
+document.getElementById("trim-spaces").addEventListener("click", trimSpaces);
 document.getElementById("sample-btn").addEventListener("click", () => {
   state.originalBuffer = null;
   state.encoding = "UTF-8";
