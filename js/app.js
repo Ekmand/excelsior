@@ -81,6 +81,8 @@ const state = {
   query: "",
   riskFilter: 0,
   selected: null,
+  anchor: null,
+  selection: new Set(),
   highlightCol: null,
   dirty: false,
   zoom: 1,
@@ -345,6 +347,8 @@ function applyResult(result, { newFile = false } = {}) {
     state.query = "";
     state.riskFilter = 0;
     state.selected = null;
+    state.anchor = null;
+    state.selection = new Set();
     state.highlightCol = null;
     state.dirty = false;
     searchInput.value = "";
@@ -695,8 +699,10 @@ function fillLine(line, index) {
     const scopedQuery = state.highlightCol == null || state.highlightCol === c ? state.query : "";
     cell.innerHTML = absent ? "" : cellHtml(value, scopedQuery);
     cell.classList.toggle("risk", state.markRisks && flag !== 0);
+    const active = !!(state.selected && state.selected.row === index && state.selected.col === c);
     cell.classList.toggle("col-hot", state.highlightCol === c);
-    cell.classList.toggle("selected", !!(state.selected && state.selected.row === index && state.selected.col === c));
+    cell.classList.toggle("in-range", !active && cellInSelection(index, c));
+    cell.classList.toggle("selected", active);
     cell.classList.toggle("absent", absent);
     if (!absent && value.length > 40) cell.title = value;
     else cell.removeAttribute("title");
@@ -846,6 +852,9 @@ function renderStatus() {
   const bits = [`${showing.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} records`];
   bits.push(`${state.colCount.toLocaleString("en-US")} columns`);
   bits.push("Text only, nothing reformatted");
+  if (state.selection && state.selection.size > 1) {
+    bits.push(`${state.selection.size.toLocaleString("en-US")} cells highlighted`);
+  }
   if (state.highlightCol != null) bits.push(`Column ${columnLetter(state.highlightCol)} highlighted`);
   if (state.sort) {
     bits.push(`Sorted ${state.sort.dir === "asc" ? "A–Z" : "Z–A"} by ${colName(state.sort.col)}`);
@@ -870,6 +879,8 @@ function closeFile() {
   state.text = "";
   state.originalBuffer = null;
   state.selected = null;
+  state.anchor = null;
+  state.selection = new Set();
   state.highlightCol = null;
   state.dirty = false;
   closeFind();
@@ -1194,8 +1205,11 @@ function paintLiveCell(row, col) {
   const flag = absent ? 0 : state.flags[row * state.colCount + col] || 0;
   cell.innerHTML = absent ? "" : cellHtml(value, state.query);
   cell.classList.toggle("risk", state.markRisks && flag !== 0);
+  const active = !!(state.selected && state.selected.row === row && state.selected.col === col);
   cell.classList.toggle("absent", absent);
-  cell.classList.toggle("selected", !!(state.selected && state.selected.row === row && state.selected.col === col));
+  cell.classList.toggle("col-hot", state.highlightCol === col);
+  cell.classList.toggle("in-range", !active && cellInSelection(row, col));
+  cell.classList.toggle("selected", active);
   if (!absent && value.length > 40) cell.title = value;
   else cell.removeAttribute("title");
 }
@@ -1442,12 +1456,110 @@ function scheduleWindow() {
   });
 }
 
-function selectCell(row, col, scroll) {
+function selectionKey(row, col) {
+  return `${row}:${col}`;
+}
+
+function cellInSelection(row, col) {
+  return !!(state.selection && state.selection.has(selectionKey(row, col)));
+}
+
+function rangeKeys(from, to) {
+  const keys = new Set();
+  if (!from || !to) return keys;
+  let posA = state.indices.indexOf(from.row);
+  let posB = state.indices.indexOf(to.row);
+  if (posA === -1 || posB === -1) {
+    keys.add(selectionKey(to.row, to.col));
+    return keys;
+  }
+  const r1 = Math.min(posA, posB);
+  const r2 = Math.max(posA, posB);
+  const c1 = Math.min(from.col, to.col);
+  const c2 = Math.max(from.col, to.col);
+  for (let pos = r1; pos <= r2; pos++) {
+    const row = state.indices[pos];
+    for (let col = c1; col <= c2; col++) keys.add(selectionKey(row, col));
+  }
+  return keys;
+}
+
+function clearColumnHighlight() {
+  if (state.highlightCol == null) return;
+  state.highlightCol = null;
+  renderHeader();
+  if (state.query) {
+    rebuildIndices();
+    renderStatus();
+  }
+}
+
+function selectCell(row, col, scroll, keepSelection = false) {
   state.selected = { row, col };
+  if (!keepSelection) {
+    state.anchor = { row, col };
+    state.selection = new Set([selectionKey(row, col)]);
+  }
   if (scroll) scrollCellIntoView();
   renderWindow();
   renderInspector();
+  renderStatus();
   fillEditor();
+}
+
+function extendSelection(row, col, scroll, add) {
+  clearColumnHighlight();
+  const anchor = state.anchor || state.selected || { row, col };
+  state.anchor = anchor;
+  const keys = rangeKeys(anchor, { row, col });
+  if (add && state.selection) {
+    for (const key of keys) state.selection.add(key);
+  } else {
+    state.selection = keys;
+  }
+  selectCell(row, col, scroll, true);
+}
+
+function toggleCellSelection(row, col) {
+  clearColumnHighlight();
+  if (!state.selection) state.selection = new Set();
+  const key = selectionKey(row, col);
+  if (state.selection.has(key) && state.selection.size > 1) {
+    state.selection.delete(key);
+    const [next] = [...state.selection].slice(-1);
+    const [nextRow, nextCol] = next.split(":").map(Number);
+    state.anchor = { row: nextRow, col: nextCol };
+    selectCell(nextRow, nextCol, false, true);
+    return;
+  }
+  state.selection.add(key);
+  state.anchor = { row, col };
+  selectCell(row, col, false, true);
+}
+
+function selectionCopyText() {
+  const cells = [];
+  for (const key of state.selection) {
+    const [row, col] = key.split(":").map(Number);
+    cells.push({ row, col });
+  }
+  cells.sort((a, b) => {
+    const pos = state.indices.indexOf(a.row) - state.indices.indexOf(b.row);
+    return pos || a.col - b.col;
+  });
+  const lines = [];
+  let current = null;
+  let parts = [];
+  for (const cell of cells) {
+    if (current !== cell.row) {
+      if (current !== null) lines.push(parts.join("\t"));
+      current = cell.row;
+      parts = [];
+    }
+    parts.push(cellStored(cell.row, cell.col));
+  }
+  if (parts.length) lines.push(parts.join("\t"));
+  return lines.join("\n");
 }
 
 function scrollCellIntoView() {
@@ -1469,7 +1581,7 @@ function scrollCellIntoView() {
   }
 }
 
-function moveSelection(dRow, dCol) {
+function moveSelection(dRow, dCol, extend) {
   if (!state.indices.length || !state.colCount) return;
   if (!state.selected || state.indices.indexOf(state.selected.row) === -1) {
     selectCell(state.indices[0], 0, true);
@@ -1479,7 +1591,9 @@ function moveSelection(dRow, dCol) {
   let col = state.selected.col;
   rowPos = Math.max(0, Math.min(state.indices.length - 1, rowPos + dRow));
   col = Math.max(0, Math.min(state.colCount - 1, col + dCol));
-  selectCell(state.indices[rowPos], col, true);
+  const row = state.indices[rowPos];
+  if (extend) extendSelection(row, col, true, false);
+  else selectCell(row, col, true);
 }
 
 function autosize(col) {
@@ -1651,7 +1765,17 @@ headLine.addEventListener("dblclick", (event) => {
 viewport.addEventListener("click", (event) => {
   const cell = event.target.closest(".cell");
   if (!cell) return;
-  selectCell(Number(cell.parentElement.dataset.index), Number(cell.dataset.col), false);
+  const row = Number(cell.parentElement.dataset.index);
+  const col = Number(cell.dataset.col);
+  const extend = event.shiftKey;
+  const toggle = event.ctrlKey || event.metaKey;
+  if (extend) extendSelection(row, col, false, toggle);
+  else if (toggle) toggleCellSelection(row, col);
+  else selectCell(row, col, false);
+});
+
+viewport.addEventListener("contextmenu", (event) => {
+  if (event.ctrlKey && event.target.closest(".cell")) event.preventDefault();
 });
 
 viewport.addEventListener("dblclick", (event) => {
@@ -1760,6 +1884,11 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c" && !typing) {
+    if (state.selection && state.selection.size > 1) {
+      event.preventDefault();
+      copyText(selectionCopyText(), `Copied ${state.selection.size.toLocaleString("en-US")} fields`);
+      return;
+    }
     if (state.highlightCol != null) {
       event.preventDefault();
       const col = state.highlightCol;
@@ -1779,28 +1908,30 @@ document.addEventListener("keydown", (event) => {
   const page = Math.max(1, Math.floor(scroller.clientHeight / rowHeight()) - 1);
   if (event.key === "ArrowDown") {
     event.preventDefault();
-    moveSelection(1, 0);
+    moveSelection(1, 0, event.shiftKey);
   } else if (event.key === "ArrowUp") {
     event.preventDefault();
-    moveSelection(-1, 0);
+    moveSelection(-1, 0, event.shiftKey);
   } else if (event.key === "ArrowRight") {
     event.preventDefault();
-    moveSelection(0, 1);
+    moveSelection(0, 1, event.shiftKey);
   } else if (event.key === "ArrowLeft") {
     event.preventDefault();
-    moveSelection(0, -1);
+    moveSelection(0, -1, event.shiftKey);
   } else if (event.key === "PageDown") {
     event.preventDefault();
-    moveSelection(page, 0);
+    moveSelection(page, 0, event.shiftKey);
   } else if (event.key === "PageUp") {
     event.preventDefault();
-    moveSelection(-page, 0);
+    moveSelection(-page, 0, event.shiftKey);
   } else if (event.key === "Escape") {
     if (!findDialog.hidden) {
       closeFind();
       return;
     }
     state.selected = null;
+    state.anchor = null;
+    state.selection = new Set();
     const hadColumn = state.highlightCol != null;
     state.highlightCol = null;
     if (hadColumn) renderHeader();
@@ -1818,11 +1949,21 @@ document.addEventListener("keydown", (event) => {
   } else if (event.key === "Delete" || event.key === "Backspace") {
     if (!state.selected) return;
     event.preventDefault();
+    if (state.selection && state.selection.size > 1) {
+      for (const key of state.selection) {
+        const [row, col] = key.split(":").map(Number);
+        applyCellEdit(row, col, "", false);
+      }
+      refreshAfterEdit(state.selected.row);
+      return;
+    }
     applyCellEdit(state.selected.row, state.selected.col, "");
     fillEditor();
-  } else if (event.key.length === 1 && !event.altKey) {
+  } else if (event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) {
     if (!state.selected) return;
     event.preventDefault();
+    const { row, col } = state.selected;
+    selectCell(row, col, false);
     fillEditor();
     formulaInput.value = event.key;
     fitEditor();
