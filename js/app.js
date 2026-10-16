@@ -81,6 +81,7 @@ const state = {
   query: "",
   riskFilter: 0,
   selected: null,
+  highlightCol: null,
   dirty: false,
   zoom: 1,
   indices: [],
@@ -344,12 +345,14 @@ function applyResult(result, { newFile = false } = {}) {
     state.query = "";
     state.riskFilter = 0;
     state.selected = null;
+    state.highlightCol = null;
     state.dirty = false;
     searchInput.value = "";
     replaceInput.value = "";
     state.hasHeader = result.rows.length > 1 ? prefs.hasHeader : false;
   }
   if (state.sort && state.sort.col >= state.colCount) state.sort = null;
+  if (state.highlightCol != null && state.highlightCol >= state.colCount) state.highlightCol = null;
   if (
     state.selected &&
     (state.selected.col >= state.colCount || state.selected.row >= state.rows.length)
@@ -420,17 +423,7 @@ function rebuildIndices() {
       }
       if (!hit) continue;
     }
-    if (query) {
-      let hit = false;
-      const len = state.rowLens[r] || 0;
-      for (let c = 0; c < len; c++) {
-        if (state.rows[r][c].toLowerCase().includes(query)) {
-          hit = true;
-          break;
-        }
-      }
-      if (!hit) continue;
-    }
+    if (query && !rowMatchesQuery(r, query)) continue;
     indices.push(r);
   }
   if (state.sort) {
@@ -615,16 +608,13 @@ function renderHeader() {
   for (let c = 0; c < state.colCount; c++) {
     const cell = document.createElement("div");
     cell.className = "hcell";
+    cell.classList.toggle("col-hot", state.highlightCol === c);
     cell.setAttribute("role", "columnheader");
-    if (state.sort && state.sort.col === c) {
-      cell.setAttribute("aria-sort", state.sort.dir === "asc" ? "ascending" : "descending");
-    } else {
-      cell.setAttribute("aria-sort", "none");
-    }
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.col = String(c);
-    button.title = "Sort as text, so 10 stays after 2 and leading zeros stay put.";
+    button.setAttribute("aria-pressed", state.highlightCol === c ? "true" : "false");
+    button.title = "Highlight this column. Find, replace, and copy then use only this column.";
     const letter = document.createElement("span");
     letter.className = "hletter";
     letter.textContent = columnLetter(c);
@@ -633,10 +623,7 @@ function renderHeader() {
     const header = headerName(c);
     name.textContent = header;
     name.hidden = !header;
-    const dir = document.createElement("span");
-    dir.className = "hdir";
-    if (state.sort && state.sort.col === c) dir.textContent = state.sort.dir === "asc" ? "A–Z" : "Z–A";
-    button.append(letter, name, dir);
+    button.append(letter, name);
     if (state.markRisks && state.colRisk[c]) {
       const dot = document.createElement("i");
       dot.className = "rdot";
@@ -705,8 +692,10 @@ function fillLine(line, index) {
     const value = state.rows[index][c] || "";
     const absent = c >= state.rowLens[index];
     const flag = absent ? 0 : state.flags[base + c] || 0;
-    cell.innerHTML = absent ? "" : cellHtml(value, state.query);
+    const scopedQuery = state.highlightCol == null || state.highlightCol === c ? state.query : "";
+    cell.innerHTML = absent ? "" : cellHtml(value, scopedQuery);
     cell.classList.toggle("risk", state.markRisks && flag !== 0);
+    cell.classList.toggle("col-hot", state.highlightCol === c);
     cell.classList.toggle("selected", !!(state.selected && state.selected.row === index && state.selected.col === c));
     cell.classList.toggle("absent", absent);
     if (!absent && value.length > 40) cell.title = value;
@@ -857,6 +846,7 @@ function renderStatus() {
   const bits = [`${showing.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} records`];
   bits.push(`${state.colCount.toLocaleString("en-US")} columns`);
   bits.push("Text only, nothing reformatted");
+  if (state.highlightCol != null) bits.push(`Column ${columnLetter(state.highlightCol)} highlighted`);
   if (state.sort) {
     bits.push(`Sorted ${state.sort.dir === "asc" ? "A–Z" : "Z–A"} by ${colName(state.sort.col)}`);
   }
@@ -880,6 +870,7 @@ function closeFile() {
   state.text = "";
   state.originalBuffer = null;
   state.selected = null;
+  state.highlightCol = null;
   state.dirty = false;
   closeFind();
   empty.hidden = false;
@@ -996,13 +987,25 @@ function refreshAfterEdit(row) {
   rememberFile();
 }
 
+function rowMatchesQuery(row, query) {
+  const len = state.rowLens[row] || 0;
+  const start = state.highlightCol == null ? 0 : state.highlightCol;
+  const end = state.highlightCol == null ? len : Math.min(len, state.highlightCol + 1);
+  for (let col = start; col < end; col++) {
+    if ((state.rows[row][col] || "").toLowerCase().includes(query)) return true;
+  }
+  return false;
+}
+
 function cellsMatching(query) {
   const q = query.trim().toLowerCase();
   const hits = [];
   if (!q) return hits;
   for (const row of state.indices) {
     const len = state.rowLens[row] || 0;
-    for (let col = 0; col < len; col++) {
+    const start = state.highlightCol == null ? 0 : state.highlightCol;
+    const end = state.highlightCol == null ? len : Math.min(len, state.highlightCol + 1);
+    for (let col = start; col < end; col++) {
       if ((state.rows[row][col] || "").toLowerCase().includes(q)) hits.push({ row, col });
     }
   }
@@ -1047,7 +1050,8 @@ function updateFindCount() {
     return;
   }
   const count = cellsMatching(state.query).length;
-  findCount.textContent = count === 1 ? "1 match" : `${count.toLocaleString("en-US")} matches`;
+  const where = state.highlightCol == null ? "" : ` in column ${columnLetter(state.highlightCol)}`;
+  findCount.textContent = (count === 1 ? "1 match" : `${count.toLocaleString("en-US")} matches`) + where;
 }
 
 function openFind(target) {
@@ -1286,11 +1290,16 @@ function fillEditor(force = false) {
   if (!state.selected || !state.rows.length || !state.colCount) {
     formulaInput.value = "";
     formulaInput.disabled = true;
-    formulaInput.placeholder = "Select a cell";
+    formulaInput.placeholder = state.highlightCol == null ? "Select a cell" : "Column highlighted";
     delete formulaInput.dataset.row;
     delete formulaInput.dataset.col;
-    cellRef.textContent = "—";
-    cellLabel.textContent = "";
+    if (state.highlightCol == null) {
+      cellRef.textContent = "—";
+      cellLabel.textContent = "";
+    } else {
+      cellRef.textContent = columnLetter(state.highlightCol);
+      cellLabel.textContent = colName(state.highlightCol);
+    }
     fitEditor();
     updateFormulaButtons();
     return;
@@ -1370,6 +1379,26 @@ function saveView() {
   const text = ExcelsiorCSV.serializeCSV(rows, state.delimiter);
   const name = state.fileName.replace(/\.csv$/i, "") + "-view.csv";
   downloadBlob(name, new Blob([text], { type: "text/csv;charset=utf-8" }));
+}
+
+function columnCopyText(col) {
+  const lines = [];
+  if (state.hasHeader && state.rows[0]) lines.push(col < state.rowLens[0] ? state.rows[0][col] ?? "" : "");
+  for (const row of state.indices) lines.push(col < state.rowLens[row] ? state.rows[row][col] ?? "" : "");
+  return lines.join("\n");
+}
+
+function selectColumn(col) {
+  state.highlightCol = state.highlightCol === col ? null : col;
+  renderHeader();
+  if (state.query) {
+    rebuildIndices();
+    scroller.scrollTop = 0;
+  }
+  renderWindow();
+  renderInspector();
+  renderStatus();
+  fillEditor();
 }
 
 async function copyText(text, message) {
@@ -1589,15 +1618,7 @@ headLine.addEventListener("click", (event) => {
   if (event.target.closest(".resize")) return;
   const button = event.target.closest("button[data-col]");
   if (!button) return;
-  const col = Number(button.dataset.col);
-  if (!state.sort || state.sort.col !== col) state.sort = { col, dir: "asc" };
-  else if (state.sort.dir === "asc") state.sort.dir = "desc";
-  else state.sort = null;
-  rebuildIndices();
-  scroller.scrollTop = 0;
-  renderHeader();
-  renderWindow();
-  renderStatus();
+  selectColumn(Number(button.dataset.col));
 });
 
 headLine.addEventListener("mousedown", (event) => {
@@ -1738,11 +1759,19 @@ document.addEventListener("keydown", (event) => {
     if (!workspace.hidden) saveEdited();
     return;
   }
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c" && state.selected && !typing) {
-    const { row, col } = state.selected;
-    if (col < state.rowLens[row]) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c" && !typing) {
+    if (state.highlightCol != null) {
       event.preventDefault();
-      copyText(state.rows[row][col], "Copied as written");
+      const col = state.highlightCol;
+      copyText(columnCopyText(col), `Copied column ${columnLetter(col)}`);
+      return;
+    }
+    if (state.selected) {
+      const { row, col } = state.selected;
+      if (col < state.rowLens[row]) {
+        event.preventDefault();
+        copyText(state.rows[row][col], "Copied as written");
+      }
     }
     return;
   }
@@ -1772,6 +1801,13 @@ document.addEventListener("keydown", (event) => {
       return;
     }
     state.selected = null;
+    const hadColumn = state.highlightCol != null;
+    state.highlightCol = null;
+    if (hadColumn) renderHeader();
+    if (hadColumn && state.query) {
+      rebuildIndices();
+      renderStatus();
+    }
     renderWindow();
     renderInspector();
     fillEditor();

@@ -1,4 +1,4 @@
-const CACHE = "excelsior-v13";
+const CACHE = "excelsior-v14";
 const ASSETS = [
   "./",
   "./index.html",

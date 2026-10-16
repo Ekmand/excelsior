@@ -1021,6 +1021,11 @@ select {
   border-bottom: 1px solid var(--outline-variant);
 }
 
+.hcell.col-hot {
+  background: color-mix(in srgb, var(--primary) 28%, var(--surface-container-high));
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+
 .hcell button {
   appearance: none;
   border: 0;
@@ -1069,11 +1074,6 @@ select {
   flex: none;
 }
 
-.hcell button:hover .hdir:empty::before {
-  content: "A–Z";
-  opacity: 0.7;
-}
-
 .rdot {
   width: 8px;
   height: 8px;
@@ -1120,21 +1120,46 @@ body.resizing * {
   background: var(--surface-container-low);
 }
 
+.cell.col-hot {
+  background: color-mix(in srgb, var(--primary) 16%, var(--surface-container-lowest));
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.line.alt .cell.col-hot {
+  background: color-mix(in srgb, var(--primary) 16%, var(--surface-container-low));
+}
+
 .cell.risk {
   background: var(--sand);
   color: var(--on-surface);
+}
+
+.cell.risk.col-hot {
+  background: color-mix(in srgb, var(--primary) 18%, var(--sand));
 }
 
 .line.alt .cell.risk {
   background: color-mix(in srgb, var(--tertiary) 22%, var(--surface-container-low));
 }
 
+.line.alt .cell.risk.col-hot {
+  background: color-mix(in srgb, var(--primary) 18%, var(--surface-container-low));
+}
+
 .line.data:hover .cell {
   background: color-mix(in srgb, var(--on-surface) 8%, var(--surface-container-low));
 }
 
+.line.data:hover .cell.col-hot {
+  background: color-mix(in srgb, var(--primary) 22%, var(--surface-container-low));
+}
+
 .line.data:hover .cell.risk {
   background: color-mix(in srgb, var(--tertiary) 28%, var(--surface-container));
+}
+
+.line.data:hover .cell.risk.col-hot {
+  background: color-mix(in srgb, var(--primary) 24%, var(--surface-container));
 }
 
 .line.data:hover .gutter {
@@ -1146,6 +1171,10 @@ body.resizing * {
   background: color-mix(in srgb, var(--primary) 16%, var(--surface-container-high));
   position: relative;
   z-index: 1;
+}
+
+.cell.selected.col-hot {
+  box-shadow: inset 0 0 0 2px var(--primary);
 }
 
 .line.data:hover .cell.selected {
