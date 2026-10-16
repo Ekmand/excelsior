@@ -144,9 +144,7 @@ select {
   justify-content: space-between;
   gap: 16px 24px;
   min-height: 64px;
-  padding: 8px 16px 8px 20px;
-  max-width: 1440px;
-  margin: 0 auto;
+  padding: 8px 12px;
   flex-wrap: wrap;
 }
 
