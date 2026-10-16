@@ -54,6 +54,7 @@ let searchTimer = 0;
 let scrollRaf = 0;
 let deferredPrompt = null;
 let dbPromise = null;
+let editOrigin = null;
 
 const state = {
   fileName: "",
@@ -371,12 +372,16 @@ function dataCount() {
   return state.hasHeader ? state.rows.length - 1 : state.rows.length;
 }
 
-function colName(col) {
+function headerName(col) {
   if (state.hasHeader && state.rows[0] && col < state.rowLens[0]) {
     const name = state.rows[0][col];
     if (name && name.trim()) return name;
   }
-  return `Column ${col + 1}`;
+  return "";
+}
+
+function colName(col) {
+  return headerName(col) || columnLetter(col);
 }
 
 function analyze() {
@@ -620,13 +625,18 @@ function renderHeader() {
     button.type = "button";
     button.dataset.col = String(c);
     button.title = "Sort as text, so 10 stays after 2 and leading zeros stay put.";
+    const letter = document.createElement("span");
+    letter.className = "hletter";
+    letter.textContent = columnLetter(c);
     const name = document.createElement("span");
     name.className = "hname";
-    name.textContent = colName(c);
+    const header = headerName(c);
+    name.textContent = header;
+    name.hidden = !header;
     const dir = document.createElement("span");
     dir.className = "hdir";
     if (state.sort && state.sort.col === c) dir.textContent = state.sort.dir === "asc" ? "A–Z" : "Z–A";
-    button.append(name, dir);
+    button.append(letter, name, dir);
     if (state.markRisks && state.colRisk[c]) {
       const dot = document.createElement("i");
       dot.className = "rdot";
@@ -757,7 +767,7 @@ function renderInspector() {
   rec.textContent = `Record ${row + 1}`;
   const label = document.createElement("p");
   label.className = "col-label";
-  label.textContent = colName(col);
+  label.textContent = headerName(col) ? `${columnLetter(col)} · ${headerName(col)}` : columnLetter(col);
   inspectorBody.append(rec, label);
 
   if (absent) {
@@ -1122,7 +1132,110 @@ function fitEditor() {
 
 function draftDiffers() {
   if (formulaInput.disabled || !state.selected) return false;
+  if (editOrigin && editOrigin.row === state.selected.row && editOrigin.col === state.selected.col) {
+    return formulaInput.value !== editOrigin.value;
+  }
   return formulaInput.value !== cellStored(state.selected.row, state.selected.col);
+}
+
+function rememberOrigin() {
+  if (!state.selected) return;
+  const { row, col } = state.selected;
+  if (editOrigin && editOrigin.row === row && editOrigin.col === col) return;
+  editOrigin = {
+    row,
+    col,
+    value: cellStored(row, col),
+    rowLen: state.rowLens[row],
+    dirty: state.dirty,
+  };
+}
+
+function paintLiveCell(row, col) {
+  const line = viewport.querySelector(`.line[data-index="${row}"]`);
+  if (!line) return;
+  const cell = line.children[col + 1];
+  if (!cell) return;
+  const absent = col >= state.rowLens[row];
+  const value = absent ? "" : state.rows[row][col] || "";
+  const flag = absent ? 0 : state.flags[row * state.colCount + col] || 0;
+  cell.innerHTML = absent ? "" : cellHtml(value, state.query);
+  cell.classList.toggle("risk", state.markRisks && flag !== 0);
+  cell.classList.toggle("absent", absent);
+  cell.classList.toggle("selected", !!(state.selected && state.selected.row === row && state.selected.col === col));
+  if (!absent && value.length > 40) cell.title = value;
+  else cell.removeAttribute("title");
+}
+
+function paintHeaderName(col) {
+  const name = headLine.querySelector(`button[data-col="${col}"] .hname`);
+  if (name) {
+    const header = headerName(col);
+    name.textContent = header;
+    name.hidden = !header;
+  }
+  if (state.selected && state.selected.row === 0 && state.selected.col === col) cellLabel.textContent = colName(col);
+}
+
+function previewEdit() {
+  if (formulaInput.disabled || !state.selected) return;
+  rememberOrigin();
+  const { row, col } = state.selected;
+  if (!state.rows[row] || !editOrigin) return;
+  const value = formulaInput.value;
+  const present = col < state.rowLens[row];
+  if (!present && value !== "") state.rowLens[row] = col + 1;
+  if (col < state.rows[row].length) state.rows[row][col] = value;
+  if (col < state.colCount) state.flags[row * state.colCount + col] = ExcelsiorCSV.classify(col < state.rowLens[row] ? value : "");
+  const changed = value !== editOrigin.value || state.rowLens[row] !== editOrigin.rowLen;
+  state.dirty = changed ? true : editOrigin.dirty;
+  fileNameEl.classList.toggle("is-dirty", state.dirty);
+  const width = Math.round(Math.min(640, Math.max(state.widths[col] || 96, measure(value) + 28)));
+  if (width !== state.widths[col]) {
+    state.widths[col] = width;
+    applyTemplate();
+  }
+  if (row === 0 && state.hasHeader) paintHeaderName(col);
+  paintLiveCell(row, col);
+  renderInspector();
+  updateFormulaButtons();
+}
+
+function restoreOrigin() {
+  if (!editOrigin || !state.rows[editOrigin.row]) {
+    editOrigin = null;
+    return;
+  }
+  const { row, col, value, rowLen } = editOrigin;
+  state.rowLens[row] = rowLen;
+  if (col < state.rows[row].length) state.rows[row][col] = value;
+  if (col < state.colCount) state.flags[row * state.colCount + col] = ExcelsiorCSV.classify(col < rowLen ? value : "");
+  state.dirty = editOrigin.dirty;
+  fileNameEl.classList.toggle("is-dirty", state.dirty);
+  editOrigin = null;
+  if (row === 0 && state.hasHeader) paintHeaderName(col);
+  paintLiveCell(row, col);
+}
+
+function finalizeEdit() {
+  if (!editOrigin) return;
+  const { row, value, rowLen } = editOrigin;
+  const current = cellStored(row, editOrigin.col);
+  const changed = current !== value || state.rowLens[row] !== rowLen;
+  editOrigin = null;
+  if (!changed) return;
+  state.dirty = true;
+  state.encoding = "UTF-8";
+  state.text = ExcelsiorCSV.serializeCSV(rowsForSave(), state.delimiter);
+  state.byteLength = new TextEncoder().encode(state.text).length;
+  analyze();
+  rebuildIndices();
+  if (row === 0 && state.hasHeader) renderHeader();
+  renderWindow();
+  renderInspector();
+  renderStatus();
+  syncControls();
+  rememberFile();
 }
 
 function updateFormulaButtons() {
@@ -1177,14 +1290,13 @@ function nameBoxTitle() {
 
 function commitEditor() {
   if (formulaInput.disabled || formulaInput.dataset.row == null) return;
-  const row = Number(formulaInput.dataset.row);
-  const col = Number(formulaInput.dataset.col);
-  if (!Number.isInteger(row) || !Number.isInteger(col) || !state.rows[row]) return;
-  applyCellEdit(row, col, formulaInput.value);
+  previewEdit();
+  finalizeEdit();
   updateFormulaButtons();
 }
 
 function cancelEditor() {
+  restoreOrigin();
   if (state.selected) formulaInput.value = cellStored(state.selected.row, state.selected.col);
   else formulaInput.value = "";
   fitEditor();
@@ -1206,7 +1318,7 @@ function insertEditorNewline() {
   formulaInput.value = `${formulaInput.value.slice(0, start)}\n${formulaInput.value.slice(end)}`;
   formulaInput.selectionStart = formulaInput.selectionEnd = start + 1;
   fitEditor();
-  updateFormulaButtons();
+  previewEdit();
 }
 
 function saveEdited() {
@@ -1500,10 +1612,14 @@ viewport.addEventListener("dblclick", (event) => {
 
 formulaInput.addEventListener("input", () => {
   fitEditor();
-  updateFormulaButtons();
+  previewEdit();
 });
 
-formulaInput.addEventListener("focus", updateFormulaButtons);
+formulaInput.addEventListener("focus", () => {
+  rememberOrigin();
+  if (state.selected && formulaInput.value !== cellStored(state.selected.row, state.selected.col)) previewEdit();
+  else updateFormulaButtons();
+});
 
 formulaInput.addEventListener("blur", () => {
   commitEditor();
