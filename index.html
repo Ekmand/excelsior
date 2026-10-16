@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111318" />
+    <meta
+      name="description"
+      content="Excelsior reads CSV files as written. Dates, ZIP codes, and long IDs are never reformatted."
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Excelsior" />
+    <title>Excelsior — CSV, as written</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <header class="mast">
+      <div class="mast-inner">
+        <div class="brand">
+          <img class="brand-mark" src="icons/icon.svg" alt="" />
+          <div>
+            <p class="brand-name">Excelsior</p>
+            <p class="brand-tag">CSV, as written</p>
+          </div>
+        </div>
+        <div class="mast-side">
+          <p class="edition">Nothing is uploaded</p>
+          <div class="mast-actions">
+            <button type="button" class="btn ghost" id="install-btn" hidden>Install</button>
+            <button type="button" class="btn primary" id="open-btn">Open CSV</button>
+          </div>
+        </div>
+      </div>
+    </header>
+    <div class="gold-rule"></div>
+    <div id="progress" class="progress" hidden></div>
+    <div id="error" class="error-banner" hidden role="alert"></div>
+
+    <section id="empty" class="empty">
+      <div class="empty-inner">
+        <p class="eyebrow">A private reader for the browser</p>
+        <h1>The file, as it was written.</h1>
+        <p class="deck">
+          Excel rewrites a CSV when it opens one. Dates shift with the locale, ZIP codes lose their zeros, and long account numbers get rounded. Excelsior reads every field as text and leaves it alone.
+        </p>
+        <div class="compare-wrap">
+          <table class="compare">
+            <thead>
+              <tr>
+                <th>As written</th>
+                <th>Excel often shows</th>
+                <th>Excelsior shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>01/02/2024</code></td>
+                <td>1/2/2024 or 2/1/2024</td>
+                <td><code>01/02/2024</code></td>
+              </tr>
+              <tr>
+                <td><code>02108</code></td>
+                <td>2108</td>
+                <td><code>02108</code></td>
+              </tr>
+              <tr>
+                <td><code>9876543210987654321</code></td>
+                <td>9.87654E+18</td>
+                <td><code>9876543210987654321</code></td>
+              </tr>
+              <tr>
+                <td><code>SEPT2</code></td>
+                <td>2-Sep</td>
+                <td><code>SEPT2</code></td>
+              </tr>
+              <tr>
+                <td><code>1/2</code></td>
+                <td>2-Jan or 1-Feb</td>
+                <td><code>1/2</code></td>
+              </tr>
+              <tr>
+                <td><code>19.90</code></td>
+                <td>19.9</td>
+                <td><code>19.90</code></td>
+              </tr>
+            </tbody>
+            <caption>The right column is the file. Excelsior does not infer a type.</caption>
+          </table>
+        </div>
+        <div class="empty-actions">
+          <button type="button" class="btn primary" id="empty-open">Open CSV</button>
+          <button type="button" class="btn" id="sample-btn">Load an example</button>
+        </div>
+        <p class="fine">
+          Parsing happens on this computer. After the first visit, Excelsior can be installed and opened offline. In Chrome or Edge, use the Install button. In Safari, choose Share, then Add to Dock.
+        </p>
+        <div id="recent" class="recent" hidden>
+          <h2>Recent files</h2>
+          <ul id="recent-list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="workspace" class="workspace" hidden>
+      <div class="main-col">
+        <div class="ribbon">
+          <div class="ribbon-title">
+            <h1 id="file-name" class="file-name"></h1>
+            <p id="file-meta" class="file-meta"></p>
+          </div>
+          <div class="ribbon-commands">
+            <div class="ribbon-group">
+              <div class="ribbon-controls">
+                <button type="button" class="btn" id="toolbar-open">Open</button>
+                <button type="button" class="btn primary" id="download-edited" title="Download the whole file, in its original order, with your edits.">Save</button>
+                <button type="button" class="btn" id="download-original" title="Download the uploaded bytes, before any edits.">Original</button>
+                <button type="button" class="btn" id="download-view" title="Download the rows on screen as CSV text. Excel may still reformat that file if you open it there.">This view</button>
+                <button type="button" class="btn" id="close-btn">Close</button>
+              </div>
+              <span class="ribbon-label">File</span>
+            </div>
+            <div class="ribbon-group">
+              <div class="ribbon-controls">
+                <label class="field">
+                  <span class="sr-only">Delimiter</span>
+                  <select id="delimiter">
+                    <option value="auto">Auto</option>
+                    <option value="comma">Comma</option>
+                    <option value="semicolon">Semicolon</option>
+                    <option value="tab">Tab</option>
+                    <option value="pipe">Pipe</option>
+                  </select>
+                </label>
+                <span id="delim-hint" class="hint"></span>
+              </div>
+              <span class="ribbon-label">Data</span>
+            </div>
+            <div class="ribbon-group">
+              <div class="ribbon-controls ribbon-toggles">
+                <label class="check"><input type="checkbox" id="header-toggle" checked /> Header row</label>
+                <label class="check"><input type="checkbox" id="risk-toggle" checked /> Mark risks</label>
+                <label class="check"><input type="checkbox" id="space-toggle" /> Show spaces</label>
+                <label class="check"><input type="checkbox" id="mono-toggle" /> Monospace</label>
+              </div>
+              <span class="ribbon-label">View</span>
+            </div>
+          </div>
+        </div>
+        <div class="formula-bar" id="formula-bar">
+          <div class="name-box" id="name-box" title="Selected cell">
+            <span id="cell-ref">—</span>
+            <span id="cell-label"></span>
+          </div>
+          <button type="button" class="formula-btn" id="formula-cancel" title="Cancel" aria-label="Cancel edit" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>
+          </button>
+          <button type="button" class="formula-btn commit" id="formula-commit" title="Keep this field" aria-label="Keep edit" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4.2 4.2L18.5 8" /></svg>
+          </button>
+          <label class="formula-field">
+            <span class="sr-only">Edit the selected cell</span>
+            <textarea
+              id="formula-input"
+              rows="1"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="Select a cell"
+              title="Enter keeps the field and moves down. Shift+Enter inserts a line break. Escape cancels."
+              disabled
+            ></textarea>
+          </label>
+        </div>
+        <div id="chips" class="chips" hidden></div>
+        <div id="warnings" class="warnings"></div>
+        <div id="sheet" class="sheet">
+          <div id="head-scroll" class="head-scroll">
+            <div class="grid">
+              <div id="head-line" class="line head" role="row"></div>
+            </div>
+          </div>
+          <div id="scroller" class="body-scroll" role="grid" tabindex="0" aria-label="CSV records">
+            <div class="grid">
+              <div id="viewport"></div>
+            </div>
+          </div>
+          <p id="grid-empty" class="grid-empty" hidden>This file has no records.</p>
+        </div>
+      </div>
+      <aside id="inspector" class="inspector" aria-live="polite">
+        <p class="eyebrow">Field</p>
+        <div id="inspector-body"></div>
+      </aside>
+    </section>
+
+    <footer id="status" class="status" hidden>
+      <span id="status-text"></span>
+      <div class="zoom">
+        <button type="button" class="zoom-btn" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+        <input id="zoom-range" type="range" min="40" max="150" step="10" value="100" aria-label="Column zoom" />
+        <button type="button" class="zoom-btn" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        <button type="button" class="zoom-btn fit" id="zoom-fit" title="Shrink the columns until they fit">Fit</button>
+        <span id="zoom-label">100%</span>
+      </div>
+      <span id="status-keys" class="keys"></span>
+    </footer>
+
+    <input id="file-input" type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" hidden />
+    <div id="drop" class="drop" hidden>
+      <p>Drop a CSV<span>Read it as written</span></p>
+    </div>
+    <div id="find-dialog" class="find-dialog" hidden role="dialog" aria-labelledby="find-title">
+      <div class="find-dialog-head">
+        <h2 id="find-title">Find and replace</h2>
+        <button type="button" class="formula-btn" id="find-close" aria-label="Close find">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>
+        </button>
+      </div>
+      <label class="search">
+        <span class="sr-only">Find</span>
+        <input id="search" type="search" placeholder="Find" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="search">
+        <span class="sr-only">Replace with</span>
+        <input id="replace" type="text" placeholder="Replace with" autocomplete="off" spellcheck="false" />
+      </label>
+      <p id="find-count" class="find-count"></p>
+      <div class="find-dialog-actions">
+        <button type="button" class="btn" id="find-prev">Previous</button>
+        <button type="button" class="btn" id="find-next">Next</button>
+        <button type="button" class="btn" id="replace-one">Replace</button>
+        <button type="button" class="btn primary" id="replace-all">Replace all</button>
+      </div>
+    </div>
+    <div id="toast" class="toast" hidden role="status"></div>
+    <div id="live" class="sr-only" aria-live="polite"></div>
+    <noscript>
+      <p class="deck">Excelsior needs JavaScript to read files on this computer.</p>
+    </noscript>
+    <script src="js/csv.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

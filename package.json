@@ -1,0 +1,9 @@
+{
+  "name": "excelsior",
+  "private": true,
+  "description": "A browser CSV reader that never reformats fields.",
+  "scripts": {
+    "start": "python3 serve.py",
+    "test": "node tests/parser.test.js"
+  }
+}
